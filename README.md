@@ -43,6 +43,15 @@ You can preview the production build with `npm run preview`.
 
 # 임시 프로젝트 용 관리자 서버
 
+## Refresh Modules
+
+```
+> rm -rf node_modules
+> rm -f package-lock.json
+> npm cache clean --force
+> yarn install
+```
+
 ## Error Handler
 
 src/hooks.server.ts 에 아래와 같은 코드가 존재한다. Hooks에서 handleError는 SvelteKit server-side에서 Error가 발생하면 해당 Error를 catch하여 해당 함수가 실행한다.
