@@ -2,74 +2,66 @@ import { CustomError } from '$lib/server/customError.js';
 import { PostgresDataSource } from '$lib/server/typeorm.utils.js';
 import { User } from '$lib/server/Entity/User.entity';
 import { dataBind } from '$lib/server/data.bind.js';
-import { createAccessToken, createRefreshToken, insertRefreshToken } from '$lib/server/token.utils.js';
-import { v4 as uuidv4 } from 'uuid';
-import { jwtDecode } from 'jwt-decode';
-import type { EntityManager } from 'typeorm';
-import { RefreshToken } from '$lib/server/Entity/RefreshToken.entity.js';
 import { getMapFromList } from '$lib/server';
+import { CResponse } from '$lib/server/cResponse';
+import { verifyJWT } from '$lib/server/jwt.utils.js';
+import { createCookieSession, deleteCookieSession } from '$lib/server/cookies';
 
-export const GET = async ({ request, cookies }): Promise<Response> => {
-	// { username , password } info
-	let bodyData = await request.json(); // username password
-
-	return new Response(JSON.stringify(bodyData));
+export const GET = async ({ cookies }) => {
+	const accessToken = cookies.get('accessToken');
+	if (accessToken) {
+		const verifiedToken = verifyJWT(accessToken);
+		let userList: any[] = [];
+		if (verifiedToken.payload?.username) {
+			await PostgresDataSource.manager.transaction(async (transactionalEntityManager) => {
+				const userInfo = await transactionalEntityManager.findOne(User, { where: { username: verifiedToken.payload?.username } });
+				userList.push(getMapFromList(userInfo, ['username', 'role', 'nickname', 'first_name', 'middle_name', 'last_name', 'email', 'mobile', 'info', 'cre_date']));
+			});
+			return new Response(JSON.stringify(new CResponse('000000', 'success', userList)));
+		}
+	}
+	throw new CustomError('000000', 'Invalid token value', 401);
 };
 
 export const POST = async ({ request, cookies }) => {
-	let bodyData: ILogin = await request.json();
-	const userEntity = new User();
-	userEntity.username = bodyData.username;
-	userEntity.password = bodyData.password;
-	let insertResult: any = null;
+	// { username password } must have
+	const userEntity = dataBind(await request.json(), new User());
 	try {
-		insertResult = await PostgresDataSource.manager.save(userEntity);
+		await PostgresDataSource.manager.transaction(async (transactionalEntityManager) => {
+			// find admin
+			const searchResult = await transactionalEntityManager.findOne(User, { where: { username: userEntity.username, password: userEntity.password } });
+			if (searchResult) await createCookieSession(transactionalEntityManager, searchResult, cookies);
+			else return new Response(JSON.stringify(new CResponse('900000', 'failed', [])));
+		});
+		return new Response(JSON.stringify(new CResponse('000000', 'success', [])));
 	} catch (error) {
-		throw new CustomError('995432', 'Insert data exception');
+		throw new CustomError('995432', 'Search data exception');
 	}
-	return new Response(JSON.stringify(insertResult));
 };
 
 export const PUT = async ({ request, cookies }) => {
 	// { username password } must have
 	const userEntity = dataBind(await request.json(), new User());
-	let insertResult: any = null;
 	try {
+		let insertResult: any = null;
 		// IsolationLevel = "READ UNCOMMITTED" | "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE";
 		('SERIALIZABLE');
 		await PostgresDataSource.manager.transaction(async (transactionalEntityManager) => {
 			// insert new user
 			insertResult = await transactionalEntityManager.save(userEntity);
-
-			// create access_token and refresh_token
-			const accessToken = createAccessToken({ username: userEntity.username }, cookies);
-			const generatedUuidV4 = uuidv4();
-			const refreshToken = createRefreshToken({ refresh_uuid: generatedUuidV4 }, cookies);
-
-			// insert refresh_token in database
-			const refreshTokenEntity = dataBind(
-				{
-					refresh_uuid: generatedUuidV4,
-					payload: getMapFromList(jwtDecode(accessToken), ['username']),
-					expires: jwtDecode(refreshToken).exp
-				},
-				new RefreshToken()
-			);
-			await insertRefreshToken(transactionalEntityManager, refreshTokenEntity);
+			await createCookieSession(transactionalEntityManager, userEntity, cookies);
 		});
+		return new Response(JSON.stringify(new CResponse('000000', 'success', insertResult)));
 	} catch (error: any) {
-		//deleteCookies(cookies);
 		throw new CustomError('005432', error.message, 500);
 	}
-	return new Response(JSON.stringify(insertResult));
 };
 
-export const DELETE = async ({ request }) => {
-	let bodyData = await request.json();
-	return new Response(JSON.stringify(bodyData));
-};
-
-const deleteCookies = async (cookies: any): Promise<void> => {
-	cookies.delete('access_token');
-	cookies.delete('refresh_token');
+export const DELETE = async ({ cookies }) => {
+	try {
+		deleteCookieSession(cookies);
+	} catch (error: any) {
+		throw new CustomError('000000', error.message, 500);
+	}
+	return new Response(JSON.stringify(new CResponse('000000', 'success', [])));
 };

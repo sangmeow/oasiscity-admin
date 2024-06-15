@@ -3,9 +3,7 @@
 export const getMapFromList = (object: any, array: string[]): any => {
 	let returnData: any = {};
 	array.forEach((v) => {
-		if (object[v]) {
-			returnData[v] = object[v];
-		}
+		object[v] ? (returnData[v] = object[v]) : (returnData[v] = null);
 	});
 	return returnData;
 };
